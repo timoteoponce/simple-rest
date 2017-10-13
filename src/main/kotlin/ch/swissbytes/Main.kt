@@ -2,7 +2,13 @@ package ch.swissbytes
 
 import spark.Spark.*
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.flywaydb.core.Flyway
+import org.skife.jdbi.v2.DBI
+import org.skife.jdbi.v2.Handle
+import org.skife.jdbi.v2.StatementContext
+import org.skife.jdbi.v2.tweak.ResultSetMapper
 import spark.Request
+import java.sql.ResultSet
 import java.util.concurrent.atomic.AtomicInteger
 
 
@@ -15,7 +21,7 @@ object Main {
         path("/users") {
 
             get("") { req, res ->
-                jacksonObjectMapper().writeValueAsString(usersRepo.users)
+                jacksonObjectMapper().writeValueAsString(usersRepo.list())
             }
 
             get("/:id") { req, res ->
@@ -26,13 +32,13 @@ object Main {
                 usersRepo.findByEmail(req.params("email"))
             }
 
-            post("/create") { req, res ->
+            post("") { req, res ->
                 usersRepo.save(name = req.queryParams("name"), email = req.queryParams("email"))
                 res.status(201)
                 "ok"
             }
 
-            patch("/update/:id") { req, res ->
+            patch("/:id") { req, res ->
                 usersRepo.update(
                         id = req.params("id").toInt(),
                         name = req.queryParams("name"),
@@ -41,7 +47,7 @@ object Main {
                 "ok"
             }
 
-            delete("/delete/:id") { req, res ->
+            delete("/:id") { req, res ->
                 usersRepo.delete(req.params("id").toInt())
                 "ok"
             }
@@ -54,34 +60,86 @@ object Main {
 
 data class User(val name: String, val email: String, val id: Int)
 
-class UserRepository {
-    val users = hashMapOf(
-            0 to User(name = "Alice", email = "alice@alice.kt", id = 0),
-            1 to User(name = "Bob", email = "bob@bob.kt", id = 1),
-            2 to User(name = "Carol", email = "carol@carol.kt", id = 2),
-            3 to User(name = "Dave", email = "dave@dave.kt", id = 3)
-    )
+class UserMapper : ResultSetMapper<User> {
+    override fun map(row: Int, result: ResultSet?, context: StatementContext?): User {
+        if (result != null) {
+            return User(id = result.getInt("ID")
+                    , name = result.getString("NAME")
+                    , email = result.getString("EMAIL"))
+        }
+        throw IllegalStateException("Invalid result")
+    }
 
-    var lastId: AtomicInteger = AtomicInteger(users.size - 1)
+}
+
+class UserRepository {
+    val dbUrl = "jdbc:postgresql://postgres/docker"
+    val dbUser = "docker"
+    val dbPwd = "docker"
+
+    init {
+        migrate()
+    }
+
+    fun migrate() {
+        val flyway = Flyway()
+        flyway.setDataSource(dbUrl, dbUser, dbPwd)
+        flyway.migrate()
+    }
+
+    private fun dbHandle (): Handle? {
+        return DBI(dbUrl, dbUser, dbPwd).open()
+    }
+
+    fun list(): List<User> {
+        val result = arrayListOf<User>()
+        dbHandle().use {
+            result.addAll(
+                    it!!.createQuery("SELECT * FROM USERS")
+                            .map(UserMapper())
+                            .list())
+        }
+        return result
+    }
+
 
     fun save(name: String, email: String) {
-        val id = lastId.incrementAndGet()
-        users.put(id, User(name = name, email = email, id = id))
+        dbHandle().use {
+            it!!.execute("INSERT INTO USERS(NAME,EMAIL) VALUES(?,?)", name, email)
+        }
     }
 
     fun findById(id: Int): User? {
-        return users[id]
+        var result:User? = null
+        dbHandle().use {
+            result = it!!.createQuery("SELECT * FROM USERS WHERE ID = :id")
+                    .bind("id",id)
+                    .map(UserMapper())
+                    .first()
+        }
+        return result
     }
 
     fun findByEmail(email: String): User? {
-        return users.values.find { it.email == email }
+        var result:User? = null
+        dbHandle().use {
+            result = it!!.createQuery("SELECT * FROM USERS WHERE EMAIL = :email")
+                    .bind("email", email)
+                    .map(UserMapper())
+                    .first()
+        }
+        return result
     }
 
     fun update(id: Int, name: String, email: String) {
-        users.put(id, User(name = name, email = email, id = id))
+        dbHandle().use {
+            it!!.execute("UPDATE USERS SET NAME = ?, EMAIL = ? WHERE ID = ?", name, email, id)
+        }
     }
 
     fun delete(id: Int) {
-        users.remove(id)
+        dbHandle().use {
+            it!!.execute("DELETE FROM USERS WHERE ID = ?", id)
+        }
     }
 }
