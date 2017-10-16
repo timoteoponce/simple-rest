@@ -1,0 +1,26 @@
+docker run -v $(pwd):/app \ 
+    -p 5001:4567 \ 
+    --workdir /app \
+    java:8-jre-alpine java -jar target/docker-workshop-1.0-SNAPSHOT.
+    
+
+
+
+
+docker run -d -e POSTGRES_USER=docker \ 
+    -e POSTGRES_PASSWORD=docker \ 
+    -e POSTGRES_DB=docker \
+     --name dockerdb  postgres:9-alpine
+
+
+docker run -it --link dockerdb governmentpaas/psql \ 
+    psql -U docker -h dockerdb
+
+
+
+
+
+
+docker run  \ 
+    --link dockerdb -p 4010:4567 \ 
+    ypfb/julio
